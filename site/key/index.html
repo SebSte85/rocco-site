@@ -6,7 +6,7 @@
   <title>Rocco — second key</title>
   <link href="https://fonts.googleapis.com/css2?family=Gabarito:wght@700;800&family=Figtree:wght@400;600&display=swap" rel="stylesheet" />
   <style>
-    :root { --night:#10161F; --bone:#F5F2EB; --amber:#D9A441; --ink:#1D1D1D; --slate:#9AA3AD; }
+    :root { --night:#10161F; --bone:#F5F2EB; --amber:#D9A441; --ink:#1D1D1D; --slate:#9AA3AD; --signal:#B3402F; }
     * { box-sizing: border-box; }
     body {
       margin: 0; min-height: 100vh; background: var(--night); color: var(--bone);
@@ -17,7 +17,16 @@
       font-family: Gabarito, sans-serif; font-weight: 800; font-size: 28px;
       letter-spacing: -0.5px; margin: 0 0 12px; text-align: center;
     }
-    p { color: var(--slate); text-align: center; line-height: 1.5; margin: 0 0 28px; max-width: 320px; }
+    p { color: var(--slate); text-align: center; line-height: 1.5; margin: 0 0 20px; max-width: 320px; }
+    label {
+      display: block; width: min(340px, 100%); font-family: Gabarito, sans-serif; font-size: 11px;
+      letter-spacing: 0.6px; color: var(--slate); margin-bottom: 6px;
+    }
+    input {
+      width: min(340px, 100%); border: 2.5px solid var(--ink); border-radius: 14px; padding: 14px;
+      font-family: Gabarito, sans-serif; font-weight: 800; font-size: 22px; letter-spacing: 6px;
+      text-align: center; background: var(--bone); color: var(--night); margin-bottom: 16px;
+    }
     button {
       width: min(340px, 100%); border: 2.5px solid var(--ink); border-radius: 16px; padding: 16px;
       font-family: Gabarito, sans-serif; font-weight: 700; font-size: 16px; cursor: pointer; margin-bottom: 12px;
@@ -27,32 +36,50 @@
     .foot { font-size: 12px; color: var(--slate); margin-top: 8px; text-align: center; }
     .msg { display: none; text-align: center; font-family: Gabarito, sans-serif; font-size: 22px; max-width: 320px; }
     .hidden { display: none !important; }
+    .err { color: var(--signal); font-size: 13px; text-align: center; margin: -8px 0 12px; min-height: 18px; }
   </style>
 </head>
 <body>
+  <div id="loading" class="msg" style="display:block">Checking…</div>
   <div id="panel" class="hidden">
     <h1 id="title">Someone wants in.</h1>
     <p id="body">Their opens are used up. You hold the second key — one session.</p>
+    <label for="pin">CODE FROM THEIR ROCCO SCREEN</label>
+    <input id="pin" inputmode="numeric" maxlength="4" autocomplete="one-time-code" placeholder="••••" />
+    <div class="err" id="err"></div>
     <button class="yes" id="approve" type="button">Let them in</button>
     <button class="no" id="deny" type="button">Keep the door shut</button>
     <p class="foot" id="foot">One-time key · no account needed</p>
   </div>
   <div class="msg" id="done"></div>
   <script>
-    // Buddy approve UI — talks to Supabase Edge Function `buddy-key`.
     const PROJECT = "aankajwzxqsmvopdpzky";
     const API = `https://${PROJECT}.supabase.co/functions/v1/buddy-key`;
-    const id = new URLSearchParams(location.search).get("id") || "";
+    const params = new URLSearchParams(location.search);
+    const id = params.get("id") || "";
+    const gated = params.get("gated") === "1";
     const panel = document.getElementById("panel");
     const done = document.getElementById("done");
+    const loading = document.getElementById("loading");
+    const err = document.getElementById("err");
 
     function showDone(text) {
+      loading.classList.add("hidden");
       panel.classList.add("hidden");
       done.style.display = "block";
       done.textContent = text;
     }
 
-    async function load() {
+    function runSelfGate() {
+      // Hand off to Rocco on this phone. If this install created the ask, Rocco blocks self-approve.
+      const resume = new URL(location.href);
+      resume.searchParams.set("gated", "1");
+      const deep = `rocco://buddy-gate?id=${encodeURIComponent(id)}&resume=${encodeURIComponent(resume.toString())}`;
+      location.href = deep;
+      setTimeout(() => { load(true); }, 1100);
+    }
+
+    async function load(afterGate) {
       if (!id) {
         showDone("This key is gone.");
         return;
@@ -64,6 +91,10 @@
         showDone("This key is gone.");
         return;
       }
+      if (key.self_blocked) {
+        showDone("Open this on your buddy’s phone — not your own.");
+        return;
+      }
       if (key.status !== "pending") {
         showDone(
           key.status === "approved" ? "Already unlocked — you’re done."
@@ -72,6 +103,13 @@
         );
         return;
       }
+
+      if (!afterGate && !gated) {
+        runSelfGate();
+        return;
+      }
+
+      loading.classList.add("hidden");
       const requester = key.requester_name || "Someone";
       const app = key.app_label || "an app on the list";
       const minutes = key.session_minutes || 5;
@@ -79,21 +117,35 @@
       const expiresLabel = expires.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       document.getElementById("title").textContent = `${requester} wants into ${app}.`;
       document.getElementById("body").textContent =
-        `Their opens are used up for today. You hold the second key — one session, ${minutes} minutes.`;
+        `Their opens are used up. Enter the 4-digit code from their Rocco waiting screen — then decide.`;
       document.getElementById("foot").textContent =
-        `One-time key · expires ${expiresLabel} · no account needed`;
+        `One session · ${minutes} min · expires ${expiresLabel} · no account needed`;
       panel.classList.remove("hidden");
     }
 
     async function resolve(action) {
+      err.textContent = "";
+      const pin = document.getElementById("pin").value.trim();
+      if (action === "approve" && !/^\d{4}$/.test(pin)) {
+        err.textContent = "Enter the 4-digit code from their phone.";
+        return;
+      }
       const res = await fetch(API, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, id })
+        body: JSON.stringify({ action, id, pin })
       });
       const data = await res.json().catch(() => ({}));
       if (action === "approve") {
-        showDone(data.ok ? "Told Rocco. You’re done." : (data.error || "Could not unlock."));
+        if (data.ok) {
+          showDone("Told Rocco. You’re done.");
+        } else if (data.error === "self_blocked") {
+          showDone(data.message || "Open this on your buddy’s phone — not your own.");
+        } else if (data.error === "bad_pin") {
+          err.textContent = data.message || "Wrong code.";
+        } else {
+          showDone(data.message || data.error || "Could not unlock.");
+        }
       } else {
         showDone(data.ok ? "Door stays shut." : (data.error || "Could not lock."));
       }
@@ -101,7 +153,7 @@
 
     document.getElementById("approve").onclick = () => resolve("approve");
     document.getElementById("deny").onclick = () => resolve("deny");
-    load().catch(() => showDone("Could not load this key."));
+    load(false).catch(() => showDone("Could not load this key."));
   </script>
 </body>
 </html>
