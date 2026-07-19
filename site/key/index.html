@@ -55,12 +55,13 @@
   <script>
     // Default = production. Debug builds append ?p=<dev-ref> so the page hits the same DB.
     const DEFAULT_PROJECT = "aankajwzxqsmvopdpzky";
+    const DEV_PROJECT = "hasolorbghpreeuxfacx";
     const params = new URLSearchParams(location.search);
     const id = params.get("id") || "";
-    const project = (params.get("p") || DEFAULT_PROJECT).replace(/[^a-z0-9]/gi, "");
     const gated = params.get("gated") === "1";
     const blocked = params.get("blocked") === "1";
-    const API = `https://${project || DEFAULT_PROJECT}.supabase.co/functions/v1/buddy-key`;
+    let project = (params.get("p") || DEFAULT_PROJECT).replace(/[^a-z0-9]/gi, "") || DEFAULT_PROJECT;
+    let API = `https://${project}.supabase.co/functions/v1/buddy-key`;
     const panel = document.getElementById("panel");
     const done = document.getElementById("done");
     const loading = document.getElementById("loading");
@@ -73,10 +74,23 @@
       done.textContent = text;
     }
 
+    function setProject(ref) {
+      project = ref;
+      API = `https://${project}.supabase.co/functions/v1/buddy-key`;
+    }
+
+    async function fetchKey(ref) {
+      const url = `https://${ref}.supabase.co/functions/v1/buddy-key?id=${encodeURIComponent(id)}&format=json`;
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({}));
+      return { res, data };
+    }
+
     function runSelfGate() {
       // Hand off to Rocco on this phone. If this install created the ask, Rocco blocks self-approve.
       const resume = new URL(location.href);
       resume.searchParams.set("gated", "1");
+      resume.searchParams.set("p", project);
       const deep = `rocco://buddy-gate?id=${encodeURIComponent(id)}&resume=${encodeURIComponent(resume.toString())}`;
       location.href = deep;
       setTimeout(() => { load(true); }, 1100);
@@ -93,10 +107,20 @@
       }
       let data = {};
       try {
-        const res = await fetch(`${API}?id=${encodeURIComponent(id)}&format=json`);
-        data = await res.json().catch(() => ({}));
-        if (!res.ok && !data.key) {
-          showDone(res.status === 404
+        let result = await fetchKey(project);
+        // Legacy links without ?p= were written by Debug to the test project, but the
+        // page defaulted to prod — try the other env once before giving up.
+        if (!result.data.key && !params.get("p")) {
+          const other = project === DEFAULT_PROJECT ? DEV_PROJECT : DEFAULT_PROJECT;
+          const fallback = await fetchKey(other);
+          if (fallback.data.key) {
+            setProject(other);
+            result = fallback;
+          }
+        }
+        data = result.data;
+        if (!result.res.ok && !data.key) {
+          showDone(result.res.status === 404
             ? "This key wasn’t found. Ask them to send a fresh link from Rocco."
             : (data.error || "Could not load this key."));
           return;
