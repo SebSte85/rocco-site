@@ -53,11 +53,14 @@
   </div>
   <div class="msg" id="done"></div>
   <script>
-    const PROJECT = "aankajwzxqsmvopdpzky";
-    const API = `https://${PROJECT}.supabase.co/functions/v1/buddy-key`;
+    // Default = production. Debug builds append ?p=<dev-ref> so the page hits the same DB.
+    const DEFAULT_PROJECT = "aankajwzxqsmvopdpzky";
     const params = new URLSearchParams(location.search);
     const id = params.get("id") || "";
+    const project = (params.get("p") || DEFAULT_PROJECT).replace(/[^a-z0-9]/gi, "");
     const gated = params.get("gated") === "1";
+    const blocked = params.get("blocked") === "1";
+    const API = `https://${project || DEFAULT_PROJECT}.supabase.co/functions/v1/buddy-key`;
     const panel = document.getElementById("panel");
     const done = document.getElementById("done");
     const loading = document.getElementById("loading");
@@ -81,18 +84,32 @@
 
     async function load(afterGate) {
       if (!id) {
-        showDone("This key is gone.");
+        showDone("This key is missing a link id.");
         return;
       }
-      const res = await fetch(`${API}?id=${encodeURIComponent(id)}&format=json`);
-      const data = await res.json().catch(() => ({}));
+      if (blocked) {
+        showDone("Open this on your buddy’s phone — not your own.");
+        return;
+      }
+      let data = {};
+      try {
+        const res = await fetch(`${API}?id=${encodeURIComponent(id)}&format=json`);
+        data = await res.json().catch(() => ({}));
+        if (!res.ok && !data.key) {
+          showDone(res.status === 404
+            ? "This key wasn’t found. Ask them to send a fresh link from Rocco."
+            : (data.error || "Could not load this key."));
+          return;
+        }
+      } catch (e) {
+        showDone("Could not reach Rocco’s servers. Try again.");
+        return;
+      }
       const key = data.key;
       if (!key) {
-        showDone("This key is gone.");
-        return;
-      }
-      if (key.self_blocked) {
-        showDone("Open this on your buddy’s phone — not your own.");
+        showDone(data.error === "not found"
+          ? "This key wasn’t found. Ask them to send a fresh link from Rocco."
+          : "This key is gone.");
         return;
       }
       if (key.status !== "pending") {
