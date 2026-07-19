@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rocco — second key</title>
+  <link href="https://fonts.googleapis.com/css2?family=Gabarito:wght@700;800&family=Figtree:wght@400;600&display=swap" rel="stylesheet" />
+  <style>
+    :root { --night:#10161F; --bone:#F5F2EB; --amber:#D9A441; --ink:#1D1D1D; --slate:#9AA3AD; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: var(--night); color: var(--bone);
+      font-family: Figtree, system-ui, sans-serif; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; padding: 28px;
+    }
+    h1 {
+      font-family: Gabarito, sans-serif; font-weight: 800; font-size: 28px;
+      letter-spacing: -0.5px; margin: 0 0 12px; text-align: center;
+    }
+    p { color: var(--slate); text-align: center; line-height: 1.5; margin: 0 0 28px; max-width: 320px; }
+    button {
+      width: min(340px, 100%); border: 2.5px solid var(--ink); border-radius: 16px; padding: 16px;
+      font-family: Gabarito, sans-serif; font-weight: 700; font-size: 16px; cursor: pointer; margin-bottom: 12px;
+    }
+    .yes { background: var(--amber); color: var(--night); }
+    .no { background: transparent; color: var(--bone); }
+    .foot { font-size: 12px; color: var(--slate); margin-top: 8px; text-align: center; }
+    .msg { display: none; text-align: center; font-family: Gabarito, sans-serif; font-size: 22px; max-width: 320px; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="panel" class="hidden">
+    <h1 id="title">Someone wants in.</h1>
+    <p id="body">Their opens are used up. You hold the second key — one session.</p>
+    <button class="yes" id="approve" type="button">Let them in</button>
+    <button class="no" id="deny" type="button">Keep the door shut</button>
+    <p class="foot" id="foot">One-time key · no account needed</p>
+  </div>
+  <div class="msg" id="done"></div>
+  <script>
+    // Buddy approve UI — talks to Supabase Edge Function `buddy-key`.
+    const PROJECT = "aankajwzxqsmvopdpzky";
+    const API = `https://${PROJECT}.supabase.co/functions/v1/buddy-key`;
+    const id = new URLSearchParams(location.search).get("id") || "";
+    const panel = document.getElementById("panel");
+    const done = document.getElementById("done");
+
+    function showDone(text) {
+      panel.classList.add("hidden");
+      done.style.display = "block";
+      done.textContent = text;
+    }
+
+    async function load() {
+      if (!id) {
+        showDone("This key is gone.");
+        return;
+      }
+      const res = await fetch(`${API}?id=${encodeURIComponent(id)}&format=json`);
+      const data = await res.json().catch(() => ({}));
+      const key = data.key;
+      if (!key) {
+        showDone("This key is gone.");
+        return;
+      }
+      if (key.status !== "pending") {
+        showDone(
+          key.status === "approved" ? "Already unlocked — you’re done."
+          : key.status === "denied" ? "Door stays shut."
+          : "This key expired."
+        );
+        return;
+      }
+      const requester = key.requester_name || "Someone";
+      const app = key.app_label || "an app on the list";
+      const minutes = key.session_minutes || 5;
+      const expires = new Date(key.expires_at);
+      const expiresLabel = expires.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      document.getElementById("title").textContent = `${requester} wants into ${app}.`;
+      document.getElementById("body").textContent =
+        `Their opens are used up for today. You hold the second key — one session, ${minutes} minutes.`;
+      document.getElementById("foot").textContent =
+        `One-time key · expires ${expiresLabel} · no account needed`;
+      panel.classList.remove("hidden");
+    }
+
+    async function resolve(action) {
+      const res = await fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, id })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (action === "approve") {
+        showDone(data.ok ? "Told Rocco. You’re done." : (data.error || "Could not unlock."));
+      } else {
+        showDone(data.ok ? "Door stays shut." : (data.error || "Could not lock."));
+      }
+    }
+
+    document.getElementById("approve").onclick = () => resolve("approve");
+    document.getElementById("deny").onclick = () => resolve("deny");
+    load().catch(() => showDone("Could not load this key."));
+  </script>
+</body>
+</html>
